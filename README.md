@@ -1,8 +1,8 @@
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="assets/kashport-logo.png">
-    <source media="(prefers-color-scheme: light)" srcset="assets/kashport-icon.png">
-    <img src="assets/kashport-icon.png" alt="Kashport" height="48">
+    <source media="(prefers-color-scheme: light)" srcset="assets/kashport-logo-dark.png">
+    <img src="assets/kashport-logo-dark.png" alt="Kashport" height="48">
   </picture>
 </p>
 

@@ -12,6 +12,7 @@ import (
 
 	"github.com/kashportsa/kp-gruuk/internal/auth"
 	"github.com/kashportsa/kp-gruuk/internal/config"
+	"github.com/kashportsa/kp-gruuk/internal/selfupdate"
 	"github.com/spf13/cobra"
 )
 
@@ -79,6 +80,14 @@ func runExpose(cmd *cobra.Command, args []string) error {
 	port, err := strconv.Atoi(args[0])
 	if err != nil || port < 1 || port > 65535 {
 		return fmt.Errorf("invalid port: %s", args[0])
+	}
+
+	// Auto-update: if a newer release is available and applied, restart the process.
+	if selfupdate.CheckAndUpdate(version) {
+		if execErr := selfupdate.Reexec(); execErr != nil {
+			return fmt.Errorf("re-exec after update: %w", execErr)
+		}
+		return nil // unreachable: Reexec replaces the process
 	}
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))

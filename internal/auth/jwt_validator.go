@@ -37,8 +37,9 @@ func NewJWTValidator(issuer, clientID string) (*JWTValidator, error) {
 }
 
 // Validate parses and validates a JWT, returning the email claim.
-func (v *JWTValidator) Validate(tokenString string) (string, error) {
-	token, err := jwt.Parse(tokenString, v.jwks.KeyfuncCtx(context.Background()),
+// The context is used for JWKS key fetching and can be used to cancel validation.
+func (v *JWTValidator) Validate(ctx context.Context, tokenString string) (string, error) {
+	token, err := jwt.Parse(tokenString, v.jwks.KeyfuncCtx(ctx),
 		jwt.WithIssuer(v.issuer),
 		jwt.WithExpirationRequired(),
 	)
@@ -55,11 +56,14 @@ func (v *JWTValidator) Validate(tokenString string) (string, error) {
 		return "", fmt.Errorf("invalid claims type")
 	}
 
-	// Check audience (cid claim is used by Okta for the client ID)
-	if cid, ok := claims["cid"].(string); ok {
-		if cid != v.clientID {
-			return "", fmt.Errorf("invalid client id in token")
-		}
+	// Check audience (cid claim is used by Okta for the client ID).
+	// This is required — a missing cid would accept tokens from any app on this issuer.
+	cid, ok := claims["cid"].(string)
+	if !ok || cid == "" {
+		return "", fmt.Errorf("missing cid claim in token")
+	}
+	if cid != v.clientID {
+		return "", fmt.Errorf("invalid client id in token")
 	}
 
 	// Extract email

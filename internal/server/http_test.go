@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"io"
 	"log/slog"
 	"net/http"
@@ -92,7 +93,7 @@ func TestTunnelConnectAuthNotConfigured(t *testing.T) {
 
 func TestTunnelConnectInvalidToken(t *testing.T) {
 	srv := newTestServer(t, false)
-	srv.ValidateToken = func(token string) (string, error) {
+	srv.ValidateToken = func(ctx context.Context, token string) (string, error) {
 		return "", &tokenError{"invalid"}
 	}
 

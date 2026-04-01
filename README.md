@@ -188,7 +188,9 @@ gruuk version
 
 ### Client Configuration
 
-Gruuk reads `~/.gruuk/config.json` on startup. You can create or edit this file to change defaults:
+The `~/.gruuk/config.json` file is **fully optional**. All fields have built-in defaults pointing to the Kashport production server and Okta tenant — a fresh install works with no configuration.
+
+You only need a config file if you want to override a default:
 
 ```json
 {
@@ -197,8 +199,6 @@ Gruuk reads `~/.gruuk/config.json` on startup. You can create or edit this file 
   "okta_client_id": "0oa..."
 }
 ```
-
-All fields are optional. If the file does not exist, Gruuk uses built-in defaults pointing to the production server. The `okta_issuer` and `okta_client_id` fields are only needed if you need to authenticate against a non-default Okta configuration.
 
 ---
 

@@ -80,6 +80,12 @@ func TestLoadClientConfigNoFile(t *testing.T) {
 	if cfg.ServerURL != DefaultServerURL {
 		t.Errorf("ServerURL: got %q, want %q", cfg.ServerURL, DefaultServerURL)
 	}
+	if cfg.OktaIssuer != DefaultOktaIssuer {
+		t.Errorf("OktaIssuer: got %q, want %q", cfg.OktaIssuer, DefaultOktaIssuer)
+	}
+	if cfg.OktaClientID != DefaultOktaClientID {
+		t.Errorf("OktaClientID: got %q, want %q", cfg.OktaClientID, DefaultOktaClientID)
+	}
 }
 
 func TestSaveAndLoadClientConfig(t *testing.T) {
@@ -111,20 +117,26 @@ func TestSaveAndLoadClientConfig(t *testing.T) {
 	}
 }
 
-func TestLoadClientConfigDefaultsEmptyServerURL(t *testing.T) {
+func TestLoadClientConfigDefaultsEmptyFields(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
 
-	// Write config with empty server_url
+	// Write config with all fields empty — should fall back to all defaults
 	gruukDir := filepath.Join(dir, ".gruuk")
 	os.MkdirAll(gruukDir, 0700)
-	os.WriteFile(filepath.Join(gruukDir, "config.json"), []byte(`{"server_url":""}`), 0600)
+	os.WriteFile(filepath.Join(gruukDir, "config.json"), []byte(`{}`), 0600)
 
 	cfg, err := LoadClientConfig()
 	if err != nil {
 		t.Fatalf("LoadClientConfig: %v", err)
 	}
 	if cfg.ServerURL != DefaultServerURL {
-		t.Errorf("expected default ServerURL when empty, got %q", cfg.ServerURL)
+		t.Errorf("ServerURL: got %q, want %q", cfg.ServerURL, DefaultServerURL)
+	}
+	if cfg.OktaIssuer != DefaultOktaIssuer {
+		t.Errorf("OktaIssuer: got %q, want %q", cfg.OktaIssuer, DefaultOktaIssuer)
+	}
+	if cfg.OktaClientID != DefaultOktaClientID {
+		t.Errorf("OktaClientID: got %q, want %q", cfg.OktaClientID, DefaultOktaClientID)
 	}
 }

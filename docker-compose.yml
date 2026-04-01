@@ -3,7 +3,7 @@ services:
     image: ${IMAGE:-805149719934.dkr.ecr.us-east-2.amazonaws.com/gruuk-server:latest}
     restart: unless-stopped
     ports:
-      - "8080:8080"
+      - "8090:8080"
     env_file:
       - .env
     environment:

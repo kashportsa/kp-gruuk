@@ -15,9 +15,10 @@ import (
 
 // Config holds server configuration.
 type Config struct {
-	Domain     string // e.g., "gk.kspt.dev"
-	ListenAddr string // e.g., ":8080"
-	SkipAuth   bool   // disable JWT validation (for testing)
+	Domain       string        // e.g., "gk.kspt.dev"
+	ListenAddr   string        // e.g., ":8080"
+	SkipAuth     bool          // disable JWT validation (for testing)
+	ProxyTimeout time.Duration // timeout for proxied requests (default: 30s)
 }
 
 // Server is the main KP-Gruuk server that handles both tunnel connections and visitor requests.
@@ -35,8 +36,12 @@ type Server struct {
 
 // New creates a new Server.
 func New(cfg Config, logger *slog.Logger) *Server {
+	timeout := cfg.ProxyTimeout
+	if timeout == 0 {
+		timeout = 30 * time.Second
+	}
 	registry := NewRegistry(logger)
-	proxy := NewProxy(registry, 30*time.Second, logger)
+	proxy := NewProxy(registry, timeout, logger)
 
 	return &Server{
 		config:   cfg,

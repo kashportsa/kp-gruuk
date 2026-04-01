@@ -1,4 +1,4 @@
-name: Deploy
+name: CI/CD
 
 on:
   push:
@@ -14,12 +14,44 @@ env:
   EC2_SG_ID: sg-0a2ca3b7c32a099b0
 
 jobs:
-  build:
-    name: Build and push image
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Run tests
+        run: go test -race ./...
+
+  version:
+    name: Version
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      new_tag: ${{ steps.tag.outputs.new_tag }}
+      changelog: ${{ steps.tag.outputs.changelog }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Bump version and push tag
+        id: tag
+        uses: mathieudutour/github-tag-action@v6.2
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          default_bump: patch
+
+  build-server:
+    name: Build server image
+    needs: version
     runs-on: ubuntu-latest
     outputs:
-      image: ${{ steps.build.outputs.image }}
-
+      image: ${{ steps.push.outputs.image }}
     steps:
       - uses: actions/checkout@v4
 
@@ -32,23 +64,55 @@ jobs:
       - uses: aws-actions/amazon-ecr-login@v2
 
       - name: Build and push
-        id: build
+        id: push
         run: |
-          IMAGE_TAG="${GITHUB_SHA::8}"
-          FULL_IMAGE="${ECR_REGISTRY}/${ECR_REPO}:${IMAGE_TAG}"
-          docker build -f Dockerfile.server -t "${FULL_IMAGE}" -t "${ECR_REGISTRY}/${ECR_REPO}:latest" .
+          VERSION="${{ needs.version.outputs.new_tag }}"
+          FULL_IMAGE="${ECR_REGISTRY}/${ECR_REPO}:${VERSION}"
+          docker build -f Dockerfile.server \
+            -t "${FULL_IMAGE}" \
+            -t "${ECR_REGISTRY}/${ECR_REPO}:latest" .
           docker push "${FULL_IMAGE}"
           docker push "${ECR_REGISTRY}/${ECR_REPO}:latest"
           echo "image=${FULL_IMAGE}" >> "$GITHUB_OUTPUT"
 
+  build-client:
+    name: Build client binaries
+    needs: version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build binaries
+        run: |
+          VERSION="${{ needs.version.outputs.new_tag }}"
+          LDFLAGS="-s -w -X github.com/kashportsa/kp-gruuk/internal/client.version=${VERSION}"
+          mkdir -p dist
+          for GOOS in darwin linux; do
+            for GOARCH in amd64 arm64; do
+              CGO_ENABLED=0 GOOS=${GOOS} GOARCH=${GOARCH} go build \
+                -ldflags "${LDFLAGS}" \
+                -o "dist/gruuk-${GOOS}-${GOARCH}" \
+                ./cmd/gruuk
+            done
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: client-binaries
+          path: dist/
+
   deploy:
     name: Deploy to EC2
-    needs: build
+    needs: build-server
     runs-on: ubuntu-latest
     concurrency:
       group: deploy-gruuk
       cancel-in-progress: false
-
     steps:
       - uses: actions/checkout@v4
 
@@ -82,7 +146,7 @@ jobs:
       - name: Deploy
         uses: appleboy/ssh-action@v1
         env:
-          IMAGE: ${{ needs.build.outputs.image }}
+          IMAGE: ${{ needs.build-server.outputs.image }}
           OKTA_ISSUER: ${{ secrets.GRUUK_OKTA_ISSUER }}
           OKTA_CLIENT_ID: ${{ secrets.GRUUK_OKTA_CLIENT_ID }}
         with:
@@ -97,20 +161,17 @@ jobs:
             mkdir -p "${DIR}"
             cd "${DIR}"
 
-            # Write runtime secrets to .env
             cat > .env <<EOF
             OKTA_ISSUER=${OKTA_ISSUER}
             OKTA_CLIENT_ID=${OKTA_CLIENT_ID}
             EOF
             chmod 600 .env
 
-            # ECR login
             export DOCKER_CONFIG=$(mktemp -d)
             aws ecr get-login-password --region us-east-2 | \
               docker login --username AWS --password-stdin "${ECR_REGISTRY}"
 
-            # Pull and deploy
-            export IMAGE="${IMAGE:-${ECR_REGISTRY}/${ECR_REPO}:latest}"
+            export IMAGE="${IMAGE}"
             docker compose pull
             docker compose up -d --remove-orphans
             docker image prune -f
@@ -127,3 +188,23 @@ jobs:
             --protocol tcp \
             --port 22 \
             --cidr "${RUNNER_IP}/32" || true
+
+  release:
+    name: GitHub release
+    needs: [version, build-client]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: client-binaries
+          path: dist/
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.version.outputs.new_tag }}
+          name: Release ${{ needs.version.outputs.new_tag }}
+          body: ${{ needs.version.outputs.changelog }}
+          files: dist/*

@@ -7,8 +7,10 @@ import (
 )
 
 const (
-	DefaultDomain    = "gk.kspt.dev"
-	DefaultServerURL = "wss://gk.kspt.dev"
+	DefaultDomain      = "gk.kspt.dev"
+	DefaultServerURL   = "wss://gk.kspt.dev"
+	DefaultOktaIssuer  = "https://kashport.okta.com/oauth2/default"
+	DefaultOktaClientID = "0oa221wiphrYZiPe51d8"
 )
 
 // ServerConfig holds server-side configuration loaded from environment variables.
@@ -69,7 +71,9 @@ func LoadClientConfig() (*ClientConfig, error) {
 	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
 		return &ClientConfig{
-			ServerURL: DefaultServerURL,
+			ServerURL:    DefaultServerURL,
+			OktaIssuer:   DefaultOktaIssuer,
+			OktaClientID: DefaultOktaClientID,
 		}, nil
 	}
 	if err != nil {
@@ -82,6 +86,12 @@ func LoadClientConfig() (*ClientConfig, error) {
 	}
 	if cfg.ServerURL == "" {
 		cfg.ServerURL = DefaultServerURL
+	}
+	if cfg.OktaIssuer == "" {
+		cfg.OktaIssuer = DefaultOktaIssuer
+	}
+	if cfg.OktaClientID == "" {
+		cfg.OktaClientID = DefaultOktaClientID
 	}
 	return &cfg, nil
 }

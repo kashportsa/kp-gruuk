@@ -1,0 +1,129 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+
+env:
+  AWS_REGION: us-east-2
+  ECR_REGISTRY: 805149719934.dkr.ecr.us-east-2.amazonaws.com
+  ECR_REPO: gruuk-server
+  SERVICE_NAME: gruuk
+  SERVER_HOST: 3.150.180.28
+  SERVER_USER: ec2-user
+  EC2_SG_ID: sg-0a2ca3b7c32a099b0
+
+jobs:
+  build:
+    name: Build and push image
+    runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.build.outputs.image }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push
+        id: build
+        run: |
+          IMAGE_TAG="${GITHUB_SHA::8}"
+          FULL_IMAGE="${ECR_REGISTRY}/${ECR_REPO}:${IMAGE_TAG}"
+          docker build -f Dockerfile.server -t "${FULL_IMAGE}" -t "${ECR_REGISTRY}/${ECR_REPO}:latest" .
+          docker push "${FULL_IMAGE}"
+          docker push "${ECR_REGISTRY}/${ECR_REPO}:latest"
+          echo "image=${FULL_IMAGE}" >> "$GITHUB_OUTPUT"
+
+  deploy:
+    name: Deploy to EC2
+    needs: build
+    runs-on: ubuntu-latest
+    concurrency:
+      group: deploy-gruuk
+      cancel-in-progress: false
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Open SSH access for runner
+        id: ssh-access
+        run: |
+          RUNNER_IP=$(curl -s https://checkip.amazonaws.com)
+          echo "runner_ip=${RUNNER_IP}" >> "$GITHUB_OUTPUT"
+          aws ec2 authorize-security-group-ingress \
+            --group-id "${EC2_SG_ID}" \
+            --protocol tcp \
+            --port 22 \
+            --cidr "${RUNNER_IP}/32"
+          sleep 5
+
+      - name: Copy compose file to server
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ env.SERVER_HOST }}
+          username: ${{ env.SERVER_USER }}
+          key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
+          source: "docker-compose.yml"
+          target: "/opt/apps/${{ env.SERVICE_NAME }}/"
+
+      - name: Deploy
+        uses: appleboy/ssh-action@v1
+        env:
+          IMAGE: ${{ needs.build.outputs.image }}
+          OKTA_ISSUER: ${{ secrets.GRUUK_OKTA_ISSUER }}
+          OKTA_CLIENT_ID: ${{ secrets.GRUUK_OKTA_CLIENT_ID }}
+        with:
+          host: ${{ env.SERVER_HOST }}
+          username: ${{ env.SERVER_USER }}
+          key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
+          envs: IMAGE,SERVICE_NAME,ECR_REGISTRY,ECR_REPO,OKTA_ISSUER,OKTA_CLIENT_ID
+          script: |
+            set -euo pipefail
+
+            DIR="/opt/apps/${SERVICE_NAME}"
+            mkdir -p "${DIR}"
+            cd "${DIR}"
+
+            # Write runtime secrets to .env
+            cat > .env <<EOF
+            OKTA_ISSUER=${OKTA_ISSUER}
+            OKTA_CLIENT_ID=${OKTA_CLIENT_ID}
+            EOF
+            chmod 600 .env
+
+            # ECR login
+            export DOCKER_CONFIG=$(mktemp -d)
+            aws ecr get-login-password --region us-east-2 | \
+              docker login --username AWS --password-stdin "${ECR_REGISTRY}"
+
+            # Pull and deploy
+            export IMAGE="${IMAGE:-${ECR_REGISTRY}/${ECR_REPO}:latest}"
+            docker compose pull
+            docker compose up -d --remove-orphans
+            docker image prune -f
+
+            echo "Deployed ${SERVICE_NAME}: ${IMAGE}"
+
+      - name: Revoke SSH access
+        if: always()
+        env:
+          RUNNER_IP: ${{ steps.ssh-access.outputs.runner_ip }}
+        run: |
+          aws ec2 revoke-security-group-ingress \
+            --group-id "${EC2_SG_ID}" \
+            --protocol tcp \
+            --port 22 \
+            --cidr "${RUNNER_IP}/32" || true

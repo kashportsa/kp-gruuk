@@ -8,10 +8,11 @@ import (
 
 // Mux tracks in-flight HTTP requests through the tunnel, mapping request IDs to response channels.
 type Mux struct {
-	mu      sync.Mutex
-	pending map[string]*pendingRequest
-	timeout time.Duration
-	done    chan struct{}
+	mu        sync.Mutex
+	pending   map[string]*pendingRequest
+	timeout   time.Duration
+	done      chan struct{}
+	closeOnce sync.Once
 }
 
 type pendingRequest struct {
@@ -86,8 +87,9 @@ func (m *Mux) CancelAll() {
 }
 
 // Close stops the cleanup goroutine and cancels all pending requests.
+// Safe to call multiple times.
 func (m *Mux) Close() {
-	close(m.done)
+	m.closeOnce.Do(func() { close(m.done) })
 	m.CancelAll()
 }
 

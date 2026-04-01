@@ -110,6 +110,7 @@ func runExpose(cmd *cobra.Command, args []string) error {
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	defer signal.Stop(sigCh)
 
 	// Connect
 	if err := client.Connect(ctx); err != nil {
@@ -141,8 +142,12 @@ func runWithReconnect(ctx context.Context, client *TunnelClient, srvURL, token s
 	attempt := 0
 	maxBackoff := 30 * time.Second
 
+	// Track the active client as a local pointer to avoid copying the struct
+	// (copying a sync.Mutex after first use is undefined behavior in Go).
+	current := client
+
 	for {
-		err := client.Run(ctx)
+		err := current.Run(ctx)
 		if ctx.Err() != nil {
 			return nil // context cancelled, clean shutdown
 		}
@@ -172,10 +177,10 @@ func runWithReconnect(ctx context.Context, client *TunnelClient, srvURL, token s
 			continue
 		}
 
-		*client = *newClient
+		current = newClient
 		attempt = 0
 
-		fmt.Printf("  Reconnected! %s -> http://localhost:%d\n\n", client.PublicURL, port)
+		fmt.Printf("  Reconnected! %s -> http://localhost:%d\n\n", current.PublicURL, port)
 	}
 }
 
@@ -237,7 +242,9 @@ func getValidToken(ctx context.Context, cfg *config.ClientConfig) (string, error
 	if token != nil && token.RefreshToken != "" && cfg.OktaIssuer != "" {
 		refreshed, err := auth.RefreshAccessToken(cfg.OktaIssuer, cfg.OktaClientID, token.RefreshToken)
 		if err == nil {
-			store.Save(refreshed)
+			if saveErr := store.Save(refreshed); saveErr != nil {
+				fmt.Fprintf(os.Stderr, "warning: failed to cache refreshed token: %v\n", saveErr)
+			}
 			return refreshed.AccessToken, nil
 		}
 	}
@@ -256,6 +263,8 @@ func getValidToken(ctx context.Context, cfg *config.ClientConfig) (string, error
 		return "", err
 	}
 
-	store.Save(tokenResp)
+	if saveErr := store.Save(tokenResp); saveErr != nil {
+		fmt.Fprintf(os.Stderr, "warning: failed to cache token: %v\n", saveErr)
+	}
 	return tokenResp.AccessToken, nil
 }

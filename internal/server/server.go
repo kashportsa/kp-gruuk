@@ -31,7 +31,7 @@ type Server struct {
 	// ValidateToken is called to validate a JWT token from tunnel clients.
 	// It should return the email address from the token claims, or an error.
 	// When SkipAuth is true, this is not called.
-	ValidateToken func(token string) (email string, err error)
+	ValidateToken func(ctx context.Context, token string) (email string, err error)
 }
 
 // New creates a new Server.
@@ -126,7 +126,7 @@ func (s *Server) handleTunnelConnect(w http.ResponseWriter, r *http.Request) {
 		}
 
 		var err error
-		email, err = s.ValidateToken(token)
+		email, err = s.ValidateToken(r.Context(), token)
 		if err != nil {
 			s.logger.Warn("token validation failed", "error", err)
 			http.Error(w, "invalid token", http.StatusUnauthorized)
@@ -161,7 +161,9 @@ func (s *Server) handleTunnelConnect(w http.ResponseWriter, r *http.Request) {
 		}
 		env, _ := tunnel.NewEnvelope(tunnel.TypeError, "", errPayload)
 		data, _ := json.Marshal(env)
-		ws.Write(r.Context(), websocket.MessageText, data)
+		if err := ws.Write(r.Context(), websocket.MessageText, data); err != nil {
+			s.logger.Warn("failed to send subdomain_taken error to client", "subdomain", subdomain, "error", err)
+		}
 		ws.Close(websocket.StatusPolicyViolation, "subdomain taken")
 		mux.Close()
 		return
